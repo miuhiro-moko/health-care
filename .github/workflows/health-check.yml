@@ -1,0 +1,106 @@
+# .github/workflows/frontend-health-check.yml
+name: Frontend Health Check
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: 
+    inputs:
+      questions:
+        description: 'テスト質問（カンマ区切り）'
+        required: false
+        default: ''
+      retries:
+        description: 'リトライ回数'
+        required: false
+        default: '2'
+      ai_name:
+        description: 'AI名'
+        required: false
+        default: ''
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: monitoring/package-lock.json
+
+      - name: Install dependencies
+        working-directory: monitoring
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: monitoring
+        run: npx playwright install chromium --with-deps
+
+      - name: Run health check
+        working-directory: monitoring
+        env:
+          # Variablesから取得（手動実行時は入力値を優先）
+          FRONT_URL: ${{ vars.FRONT_URL || 'https://stg.front.geechat.jp' }}
+          AI_NAME: ${{ github.event.inputs.ai_name || vars.AI_NAME || 'sample1' }}
+          QUESTIONS: ${{ github.event.inputs.questions || vars.QUESTIONS_DEFAULT || '質問1,質問2,1人でも利用できますか？' }}
+          
+          # Secretsから取得
+          BASIC_AUTH_USER: ${{ secrets.BASIC_AUTH_USER }}
+          BASIC_AUTH_PASS: ${{ secrets.BASIC_AUTH_PASS }}
+          
+          # その他の設定
+          TIMEOUT_MS: ${{ vars.TIMEOUT_MS || '30000' }}
+          RETRIES: ${{ github.event.inputs.retries || vars.RETRIES || '2' }}
+          HEADLESS: true
+        run: |
+          echo "🎯 Target URL: ${FRONT_URL}?ai_name=${AI_NAME}"
+          echo "❓ Questions: ${QUESTIONS}"
+          echo "⚙️  Retries: ${RETRIES}, Timeout: ${TIMEOUT_MS}ms"
+          
+          if node health-check.js; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshots-${{ github.run_number }}-${{ github.run_attempt }}
+          path: monitoring/screenshots/
+          retention-days: 7
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## 🏥 Health Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target URL**: ${{ vars.FRONT_URL || 'https://stg.front.geechat.jp' }}?ai_name=${{ github.event.inputs.ai_name || vars.AI_NAME || 'sample1' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Questions**: ${{ github.event.inputs.questions || vars.QUESTIONS_DEFAULT || '質問1,質問2,1人でも利用できますか？' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ job.status }}" == "failure" ]; then
+            echo "- **📸 Screenshots**: Available in artifacts" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "🚨 Health check failed!"
+          echo "📅 Time: $(date -u)"
+          echo "🔗 URL: ${{ vars.FRONT_URL || 'https://stg.front.geechat.jp' }}?ai_name=${{ github.event.inputs.ai_name || vars.AI_NAME || 'sample1' }}"
+          echo "🏃 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          # TODO: ここにSlack/Discord/メール通知を追加可能
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"🚨 Health check failed: ${{ vars.FRONT_URL }}"}' \
+          #   "${{ secrets.SLACK_WEBHOOK_URL }}"
