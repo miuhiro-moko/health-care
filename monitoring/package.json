@@ -1,0 +1,14 @@
+{
+  "name": "geechat-front-monitoring",
+  "version": "1.0.0",
+  "description": "GeChat frontend health check monitoring",
+  "main": "health-check.js",
+  "scripts": {
+    "health-check": "node health-check.js",
+    "install-browsers": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "playwright": "^1.40.0"
+  }
+}
